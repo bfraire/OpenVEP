@@ -17,13 +17,11 @@ stim_duration = 1.2
 stim_type = 'alternating' # 'alternating' or 'independent'
 
 if cyton_in:
-    import glob
-    import sys
+    import glob, sys, time, serial
     from brainflow.board_shim import BoardShim, BrainFlowInputParams
     from serial import Serial
-    import time
-    import serial
     from threading import Thread, Event
+    from queue import Queue
     CYTON_BOARD_ID = 0 # 0 if no daisy 2 if use daisy board, 6 if using daisy+wifi shield
     BAUD_RATE = 115200
     ANALOGUE_MODE = '/2' # Reads from analog pins A5(D11), A6(D12) and if no 
@@ -79,23 +77,20 @@ if cyton_in:
     print(res_query)
     board.start_stream(45000)
     stop_event = Event()
-
-    def get_data(eeg, aux, timestamp, lsl_out=False):
+    
+    def get_data(queue_in, lsl_out=False):
         while not stop_event.is_set():
             data_in = board.get_board_data()
             timestamp_in = data_in[board.get_timestamp_channel(CYTON_BOARD_ID)]
             eeg_in = data_in[board.get_eeg_channels(CYTON_BOARD_ID)]
             aux_in = data_in[board.get_analog_channels(CYTON_BOARD_ID)]
-            # print(timestamp.shape, eeg_data.shape, aux_data.shape)
-            eeg = np.concatenate((eeg, eeg_in), axis=1)
-            aux = np.concatenate((aux, aux_in), axis=1)
-            timestamp = np.concatenate((timestamp, timestamp_in), axis=0)
-            print(eeg.shape, aux.shape, timestamp.shape)
-            time.sleep(0.2)
-    eeg = np.zeros((8, 0))
-    aux = np.zeros((3, 0))
-    timestamp = np.zeros((0))
-    cyton_thread = Thread(target=get_data, args=(eeg, aux, timestamp, lsl_out))
+            if len(timestamp_in) > 0:
+                print('queue-in: ', eeg_in.shape, aux_in.shape, timestamp_in.shape)
+                queue_in.put((eeg_in, aux_in, timestamp_in))
+            time.sleep(0.1)
+    
+    queue_in = Queue()
+    cyton_thread = Thread(target=get_data, args=(queue_in, lsl_out))
     cyton_thread.daemon = True
     cyton_thread.start()
 
@@ -165,19 +160,43 @@ if stim_type == 'alternating': # Alternating VEP (aka SSVEP)
             stimulus_frames[:, i_class] = signal.square(2 * np.pi * flickering_freq * (frame_indices / refresh_rate) + phase_offset * np.pi)  # frequency approximation formula
 trial_sequence = create_trial_sequence(n_per_class=1, classes=stimulus_classes, seed=0)
 
+eeg = np.zeros((8, 0))
+aux = np.zeros((3, 0))
+timestamp = np.zeros((0))
 
 if data_collection:
     for i_trial, (flickering_freq, phase_offset) in enumerate(trial_sequence):
-        keys = keyboard.getKeys()
-        if 'escape' in keys:
-            core.quit()
-        for i_frame in range(num_frames):
-            visual_stimulus.colors = np.array([stimulus_frames[i_frame]] * 3).T
-            visual_stimulus.draw()
-            window.flip()
-            if i_frame == num_frames - 1:
-                core.wait(1)  # wait for 1 second after the last frame
-        core.wait(1)  # wait for 1 second after the last trial
+        finished_displaying = False
+        while not finished_displaying:
+            for i_frame in range(num_frames):
+                next_flip = window.getFutureFlipTime()
+                keys = keyboard.getKeys()
+                if 'escape' in keys:
+                    core.quit()
+                visual_stimulus.colors = np.array([stimulus_frames[i_frame]] * 3).T
+                visual_stimulus.draw()
+                if core.getTime() > next_flip and i_frame != 0:
+                    print('Missed frame')
+                    visual_stimulus.colors = np.array([-1] * 3).T
+                    window.flip()
+                    core.wait(1)
+                    break
+                window.flip()
+            finished_displaying = True
+            core.wait(1)
+        if cyton_in:
+            while not queue_in.empty():
+                eeg_in, aux_in, timestamp_in = queue_in.get()
+                print('data-in: ', eeg_in.shape, aux_in.shape, timestamp_in.shape)
+                eeg = np.concatenate((eeg, eeg_in), axis=1)
+                aux = np.concatenate((aux, aux_in), axis=1)
+                timestamp = np.concatenate((timestamp, timestamp_in), axis=0)
+            print('total: ',eeg.shape, aux.shape, timestamp.shape)
+            # trial_eeg = np.copy(eeg[-100:])
+            # trial_aux = np.copy(aux[-100:])
+            # trial_timestamp = np.copy(timestamp)
+            # print(trial_eeg.shape, trial_aux.shape, trial_timestamp.shape)
+            # print(eeg.shape, aux.shape, timestamp.shape)
 else:
     while True:
         keys = keyboard.getKeys()
@@ -187,6 +206,4 @@ else:
             visual_stimulus.colors = np.array([stimulus_frames[i_frame]] * 3).T
             visual_stimulus.draw()
             window.flip()
-            if i_frame == num_frames - 1:
-                core.wait(1)  # wait for 1 second after the last frame
-        core.wait(1)  # wait for 1 second after the last trial
+        core.wait(1)
