@@ -94,22 +94,38 @@ if cyton_in:
     cyton_thread.daemon = True
     cyton_thread.start()
 
-def create_32_targets(size=120, colors=[-1, -1, -1] * 32, checkered=False):
+# def create_32_targets(size=120, colors=[-1, -1, -1] * 32, checkered=False):
+#     positions = []
+#     positions.extend([[-width / 2 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+#     positions.extend([[-width / 2 + 190 * 1 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+#     positions.extend([[-width / 2 + 190 * 2 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+#     positions.extend([[-width / 2 + 190 * 3 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+#     positions.extend([[-width / 2 + 190 * 4 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+#     positions.extend([[-width / 2 + 190 * 5 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+#     positions.extend([[-width / 2 + 190 * 6 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+#     positions.extend([[-width / 2 + 190 * 7 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+#     if checkered:
+#         texture = checkered_texure()
+#     else:
+#         texture = None
+#     keys = visual.ElementArrayStim(window, nElements=32, elementTex=texture, elementMask=None, units='pix',
+#                                    sizes=[size, size], xys=positions, colors=colors)
+#     return keys
+
+def create_32_targets(size=2/8*0.7, colors=[-1, -1, -1] * 32, checkered=False):
+    size_with_border = size / 0.7
+    width, height = window.size
+    aspect_ratio = width/height
     positions = []
-    positions.extend([[-width / 2 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    positions.extend([[-width / 2 + 190 * 1 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    positions.extend([[-width / 2 + 190 * 2 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    positions.extend([[-width / 2 + 190 * 3 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    positions.extend([[-width / 2 + 190 * 4 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    positions.extend([[-width / 2 + 190 * 5 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    positions.extend([[-width / 2 + 190 * 6 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    positions.extend([[-width / 2 + 190 * 7 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+    for i_col in range(8):
+        positions.extend([[i_col*size_with_border-1+size_with_border/2, -j_row*size_with_border*aspect_ratio+1-size_with_border*aspect_ratio/2 - 1/4/2] for j_row in range(4)])
+
     if checkered:
         texture = checkered_texure()
     else:
         texture = None
-    keys = visual.ElementArrayStim(window, nElements=32, elementTex=texture, elementMask=None, units='pix',
-                                   sizes=[size, size], xys=positions, colors=colors)
+    keys = visual.ElementArrayStim(window, nElements=32, elementTex=texture, elementMask=None, units='norm',
+                                   sizes=[size, size * aspect_ratio], xys=positions, colors=colors)
     return keys
 
 def checkered_texure():
