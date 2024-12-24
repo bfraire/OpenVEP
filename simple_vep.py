@@ -1,20 +1,26 @@
-
-
-
 from psychopy import visual, core
 from psychopy.hardware import keyboard
 import numpy as np
 from scipy import signal
-import random
+import random, os
 
 cyton_in = True
 lsl_out = False
-data_collection = True
 width = 1536
 height = 864
 refresh_rate = 60.02
 stim_duration = 1.2
+n_per_class = 2
 stim_type = 'alternating' # 'alternating' or 'independent'
+subject = 1
+session = 1
+training_mode = True
+save_dir = f'data/cyton8_{stim_type}-vep_32-class_{stim_duration}s/sub-{subject:02d}/ses-{session:02d}/' # Directory to save data to
+run = 1
+save_file_eeg = save_dir + f'eeg_{n_per_class}-per-class_run-{run}.npy'
+save_file_aux = save_dir + f'aux_{n_per_class}-per-class_run-{run}.npy'
+save_file_timestamp = save_dir + f'timestamp_{n_per_class}-per-class_run-{run}.npy'
+save_file_metadata = save_dir + f'metadata_{n_per_class}-per-class_run-{run}.npy'
 
 if cyton_in:
     import glob, sys, time, serial
@@ -137,6 +143,13 @@ def checkered_texure():
         array[i, 1::2] = (i+1) % 2  # Set every other element to 0 or 1, alternating by row
     return np.kron(array, np.ones((16, 16)))*2-1
 
+def create_photosensor_dot(size=2/8*0.7):
+    width, height = window.size
+    ratio = width/height
+    return visual.Rect(win=window, units="norm", width=size, height=size * ratio, 
+                       fillColor='white', lineWidth = 0, pos = [1 - size/2, -1 - size/8]
+    )
+
 def create_trial_sequence(n_per_class, classes=[(7.5, 0), (8.57, 0), (10, 0), (12, 0), (15, 0)], seed=0):
     """
     Create a random sequence of trials with n_per_class of each class
@@ -159,6 +172,7 @@ window = visual.Window(
         useRetina = False,
     )
 visual_stimulus = create_32_targets(checkered=True)
+photosensor_dot = create_photosensor_dot()
 num_frames = np.round(stim_duration * refresh_rate).astype(int)  # total number of frames per trial
 frame_indices = np.arange(num_frames)  # frame indices for the trial
 if stim_type == 'alternating': # Alternating VEP (aka SSVEP)
@@ -180,7 +194,13 @@ eeg = np.zeros((8, 0))
 aux = np.zeros((3, 0))
 timestamp = np.zeros((0))
 
-if data_collection:
+if training_mode:
+    visual_stimulus.colors = np.array([-1] * 3).T
+    visual_stimulus.draw()
+    photosensor_dot.color = np.array([-1, -1, -1])
+    photosensor_dot.draw()
+    window.flip()
+    core.wait(1)
     for i_trial, (flickering_freq, phase_offset) in enumerate(trial_sequence):
         finished_displaying = False
         while not finished_displaying:
@@ -188,18 +208,33 @@ if data_collection:
                 next_flip = window.getFutureFlipTime()
                 keys = keyboard.getKeys()
                 if 'escape' in keys:
+                    if cyton_in:
+                        os.makedirs(save_dir, exist_ok=True)
+                        np.save(save_file_eeg, eeg)
+                        np.save(save_file_aux, aux)
+                        np.save(save_file_timestamp, timestamp)
                     core.quit()
                 visual_stimulus.colors = np.array([stimulus_frames[i_frame]] * 3).T
                 visual_stimulus.draw()
+                photosensor_dot.color = np.array([1, 1, 1])
+                photosensor_dot.draw()
                 if core.getTime() > next_flip and i_frame != 0:
                     print('Missed frame')
                     visual_stimulus.colors = np.array([-1] * 3).T
+                    visual_stimulus.draw()
+                    photosensor_dot.color = np.array([-1, -1, -1])
+                    photosensor_dot.draw()
                     window.flip()
                     core.wait(1)
                     break
                 window.flip()
             finished_displaying = True
-            core.wait(1)
+        visual_stimulus.colors = np.array([-1] * 3).T
+        visual_stimulus.draw()
+        photosensor_dot.color = np.array([-1, -1, -1])
+        photosensor_dot.draw()
+        window.flip()
+        core.wait(1)
         if cyton_in:
             while not queue_in.empty():
                 eeg_in, aux_in, timestamp_in = queue_in.get()
@@ -213,6 +248,12 @@ if data_collection:
             # trial_timestamp = np.copy(timestamp)
             # print(trial_eeg.shape, trial_aux.shape, trial_timestamp.shape)
             # print(eeg.shape, aux.shape, timestamp.shape)
+    if cyton_in:
+        os.makedirs(save_dir, exist_ok=True)
+        np.save(save_file_eeg, eeg)
+        np.save(save_file_aux, aux)
+        np.save(save_file_timestamp, timestamp)
+
 else:
     while True:
         keys = keyboard.getKeys()
