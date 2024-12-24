@@ -1,4 +1,4 @@
-# SimpleVEP
+# OpenVEP
 
 ## Setup for Windows 11
 ```
