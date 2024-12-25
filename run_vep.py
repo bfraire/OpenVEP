@@ -4,10 +4,11 @@ import numpy as np
 from scipy import signal
 import random, os
 
-cyton_in = True
+cyton_in = False
 lsl_out = False
 width = 1536
 height = 864
+aspect_ratio = width/height
 refresh_rate = 60.02
 stim_duration = 1.2
 n_per_class = 2
@@ -103,32 +104,10 @@ if cyton_in:
     cyton_thread.daemon = True
     cyton_thread.start()
 
-# def create_32_targets(size=120, colors=[-1, -1, -1] * 32, checkered=False):
-#     positions = []
-#     positions.extend([[-width / 2 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-#     positions.extend([[-width / 2 + 190 * 1 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-#     positions.extend([[-width / 2 + 190 * 2 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-#     positions.extend([[-width / 2 + 190 * 3 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-#     positions.extend([[-width / 2 + 190 * 4 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-#     positions.extend([[-width / 2 + 190 * 5 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-#     positions.extend([[-width / 2 + 190 * 6 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-#     positions.extend([[-width / 2 + 190 * 7 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-#     if checkered:
-#         texture = checkered_texure()
-#     else:
-#         texture = None
-#     keys = visual.ElementArrayStim(window, nElements=32, elementTex=texture, elementMask=None, units='pix',
-#                                    sizes=[size, size], xys=positions, colors=colors)
-#     return keys
-
 def create_32_targets(size=2/8*0.7, colors=[-1, -1, -1] * 32, checkered=False):
-    size_with_border = size / 0.7
     width, height = window.size
     aspect_ratio = width/height
-    positions = []
-    for i_col in range(8):
-        positions.extend([[i_col*size_with_border-1+size_with_border/2, -j_row*size_with_border*aspect_ratio+1-size_with_border*aspect_ratio/2 - 1/4/2] for j_row in range(4)])
-
+    positions = create_32_target_positions(size)
     if checkered:
         texture = checkered_texure()
     else:
@@ -145,6 +124,15 @@ def checkered_texure():
         array[i, ::2] = i % 2  # Set every other element to 0 or 1, alternating by row
         array[i, 1::2] = (i+1) % 2  # Set every other element to 0 or 1, alternating by row
     return np.kron(array, np.ones((16, 16)))*2-1
+
+def create_32_target_positions(size=2/8*0.7):
+    size_with_border = size / 0.7
+    width, height = window.size
+    aspect_ratio = width/height
+    positions = []
+    for i_col in range(8):
+        positions.extend([[i_col*size_with_border-1+size_with_border/2, -j_row*size_with_border*aspect_ratio+1-size_with_border*aspect_ratio/2 - 1/4/2] for j_row in range(4)])
+    return positions
 
 def create_photosensor_dot(size=2/8*0.7):
     width, height = window.size
@@ -191,7 +179,11 @@ if stim_type == 'alternating': # Alternating VEP (aka SSVEP)
     for i_class, (flickering_freq, phase_offset) in enumerate(stimulus_classes):
             phase_offset += .00001  # nudge phase slightly from points of sudden jumps for offsets that are pi multiples
             stimulus_frames[:, i_class] = signal.square(2 * np.pi * flickering_freq * (frame_indices / refresh_rate) + phase_offset * np.pi)  # frequency approximation formula
-trial_sequence = create_trial_sequence(n_per_class=n_per_class, classes=stimulus_classes, seed=run)
+# trial_sequence = create_trial_sequence(n_per_class=n_per_class, classes=stimulus_classes, seed=run)
+trial_sequence = np.tile(np.arange(32), n_per_class)
+np.random.seed(run)
+np.random.shuffle(trial_sequence)
+target_positions = create_32_target_positions(size=2/8*0.7)
 
 eeg = np.zeros((8, 0))
 aux = np.zeros((3, 0))
@@ -202,13 +194,17 @@ trial_ends = []
 skip_count = 0 # Number of trials to skip due to frame miss in those trials
 
 if training_mode:
-    visual_stimulus.colors = np.array([-1] * 3).T
-    visual_stimulus.draw()
-    photosensor_dot.color = np.array([-1, -1, -1])
-    photosensor_dot.draw()
-    window.flip()
-    core.wait(1)
-    for i_trial, (flickering_freq, phase_offset) in enumerate(trial_sequence):
+    for i_trial, target_id in enumerate(trial_sequence):
+        trial_text = visual.TextStim(window, text=f'Trial {i_trial+1}/{len(trial_sequence)}', pos=(0, -1+0.07), color='white', units='norm', height=0.07)
+        trial_text.draw()
+        visual_stimulus.colors = np.array([-1] * 3).T
+        visual_stimulus.draw()
+        photosensor_dot.color = np.array([-1, -1, -1])
+        photosensor_dot.draw()
+        aim_target = visual.Rect(win=window, units="norm", width=2/8*0.7 * 1.3, height=2/8*0.7*aspect_ratio * 1.3, pos=target_positions[target_id], lineColor='red', lineWidth=3)
+        aim_target.draw()
+        window.flip()
+        core.wait(1)
         finished_displaying = False
         while not finished_displaying:
             for i_frame in range(num_frames):
@@ -227,6 +223,8 @@ if training_mode:
                 visual_stimulus.draw()
                 photosensor_dot.color = np.array([1, 1, 1])
                 photosensor_dot.draw()
+                trial_text.draw()
+                aim_target.draw()
                 if core.getTime() > next_flip and i_frame != 0:
                     print('Missed frame')
                     skip_count += 1
@@ -238,6 +236,8 @@ if training_mode:
                     visual_stimulus.draw()
                     photosensor_dot.color = np.array([-1, -1, -1])
                     photosensor_dot.draw()
+                    trial_text.draw()
+                    aim_target.draw()
                     window.flip()
                     core.wait(0.5)
                     break
@@ -247,6 +247,7 @@ if training_mode:
         visual_stimulus.draw()
         photosensor_dot.color = np.array([-1, -1, -1])
         photosensor_dot.draw()
+        trial_text.draw()
         window.flip()
         if cyton_in:
             while len(trial_ends) <= i_trial+skip_count: # Wait for the current trial to be collected
@@ -273,7 +274,7 @@ if training_mode:
             # trial_eeg = np.copy(eeg[time_window:])
             # trial_aux = np.copy(aux[time_window:])
             # photo_trigger = (trial_aux[1] > 20).astype(int)
-        core.wait(1)
+        # core.wait(1)
     if cyton_in:
         os.makedirs(save_dir, exist_ok=True)
         np.save(save_file_eeg, eeg)
