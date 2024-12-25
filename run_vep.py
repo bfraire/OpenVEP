@@ -16,11 +16,13 @@ subject = 1
 session = 1
 training_mode = True
 save_dir = f'data/cyton8_{stim_type}-vep_32-class_{stim_duration}s/sub-{subject:02d}/ses-{session:02d}/' # Directory to save data to
-run = 1
+run = 2 # Run number, it is used as the random seed for the trial sequence generation
 save_file_eeg = save_dir + f'eeg_{n_per_class}-per-class_run-{run}.npy'
 save_file_aux = save_dir + f'aux_{n_per_class}-per-class_run-{run}.npy'
 save_file_timestamp = save_dir + f'timestamp_{n_per_class}-per-class_run-{run}.npy'
 save_file_metadata = save_dir + f'metadata_{n_per_class}-per-class_run-{run}.npy'
+save_file_eeg_trials = save_dir + f'eeg-trials_{n_per_class}-per-class_run-{run}.npy'
+save_file_aux_trials = save_dir + f'aux-trials_{n_per_class}-per-class_run-{run}.npy'
 
 if cyton_in:
     import glob, sys, time, serial
@@ -28,6 +30,7 @@ if cyton_in:
     from serial import Serial
     from threading import Thread, Event
     from queue import Queue
+    sampling_rate = 250
     CYTON_BOARD_ID = 0 # 0 if no daisy 2 if use daisy board, 6 if using daisy+wifi shield
     BAUD_RATE = 115200
     ANALOGUE_MODE = '/2' # Reads from analog pins A5(D11), A6(D12) and if no 
@@ -188,11 +191,15 @@ if stim_type == 'alternating': # Alternating VEP (aka SSVEP)
     for i_class, (flickering_freq, phase_offset) in enumerate(stimulus_classes):
             phase_offset += .00001  # nudge phase slightly from points of sudden jumps for offsets that are pi multiples
             stimulus_frames[:, i_class] = signal.square(2 * np.pi * flickering_freq * (frame_indices / refresh_rate) + phase_offset * np.pi)  # frequency approximation formula
-trial_sequence = create_trial_sequence(n_per_class=1, classes=stimulus_classes, seed=0)
+trial_sequence = create_trial_sequence(n_per_class=n_per_class, classes=stimulus_classes, seed=run)
 
 eeg = np.zeros((8, 0))
 aux = np.zeros((3, 0))
 timestamp = np.zeros((0))
+eeg_trials = []
+aux_trials = []
+trial_ends = []
+skip_count = 0 # Number of trials to skip due to frame miss in those trials
 
 if training_mode:
     visual_stimulus.colors = np.array([-1] * 3).T
@@ -212,7 +219,9 @@ if training_mode:
                         os.makedirs(save_dir, exist_ok=True)
                         np.save(save_file_eeg, eeg)
                         np.save(save_file_aux, aux)
-                        np.save(save_file_timestamp, timestamp)
+                        # np.save(save_file_timestamp, timestamp)
+                        np.save(save_file_eeg_trials, eeg_trials)
+                        np.save(save_file_aux_trials, aux_trials)
                     core.quit()
                 visual_stimulus.colors = np.array([stimulus_frames[i_frame]] * 3).T
                 visual_stimulus.draw()
@@ -220,12 +229,17 @@ if training_mode:
                 photosensor_dot.draw()
                 if core.getTime() > next_flip and i_frame != 0:
                     print('Missed frame')
+                    skip_count += 1
+                    visual_stimulus.colors = np.array([-1] * 3).T
+                    visual_stimulus.draw()
+                    window.flip()
+                    core.wait(0.5)
                     visual_stimulus.colors = np.array([-1] * 3).T
                     visual_stimulus.draw()
                     photosensor_dot.color = np.array([-1, -1, -1])
                     photosensor_dot.draw()
                     window.flip()
-                    core.wait(1)
+                    core.wait(0.5)
                     break
                 window.flip()
             finished_displaying = True
@@ -234,25 +248,38 @@ if training_mode:
         photosensor_dot.color = np.array([-1, -1, -1])
         photosensor_dot.draw()
         window.flip()
-        core.wait(1)
         if cyton_in:
-            while not queue_in.empty():
-                eeg_in, aux_in, timestamp_in = queue_in.get()
-                print('data-in: ', eeg_in.shape, aux_in.shape, timestamp_in.shape)
-                eeg = np.concatenate((eeg, eeg_in), axis=1)
-                aux = np.concatenate((aux, aux_in), axis=1)
-                timestamp = np.concatenate((timestamp, timestamp_in), axis=0)
+            while len(trial_ends) <= i_trial+skip_count: # Wait for the current trial to be collected
+                while not queue_in.empty(): # Collect all data from the queue
+                    eeg_in, aux_in, timestamp_in = queue_in.get()
+                    print('data-in: ', eeg_in.shape, aux_in.shape, timestamp_in.shape)
+                    eeg = np.concatenate((eeg, eeg_in), axis=1)
+                    aux = np.concatenate((aux, aux_in), axis=1)
+                    timestamp = np.concatenate((timestamp, timestamp_in), axis=0)
+                photo_trigger = (aux[1] > 20).astype(int)
+                trial_starts = np.where(np.diff(photo_trigger) == 1)[0]
+                trial_ends = np.where(np.diff(photo_trigger) == -1)[0]
             print('total: ',eeg.shape, aux.shape, timestamp.shape)
-            # trial_eeg = np.copy(eeg[-100:])
-            # trial_aux = np.copy(aux[-100:])
-            # trial_timestamp = np.copy(timestamp)
-            # print(trial_eeg.shape, trial_aux.shape, trial_timestamp.shape)
-            # print(eeg.shape, aux.shape, timestamp.shape)
+            baseline_duration = 0.2
+            baseline_duration_samples = int(baseline_duration * sampling_rate)
+            trial_start = trial_starts[i_trial+skip_count] - baseline_duration_samples
+            trial_duration = int(stim_duration * sampling_rate) + baseline_duration_samples
+            trial_eeg = np.copy(eeg[:, trial_start:trial_start+trial_duration])
+            trial_aux = np.copy(aux[:, trial_start:trial_start+trial_duration])
+            print(f'trial {i_trial}: ', trial_eeg.shape, trial_aux.shape)
+            eeg_trials.append(trial_eeg)
+            aux_trials.append(trial_aux)
+            # time_window = -int((stim_duration + 0.3) * sampling_rate)
+            # trial_eeg = np.copy(eeg[time_window:])
+            # trial_aux = np.copy(aux[time_window:])
+            # photo_trigger = (trial_aux[1] > 20).astype(int)
+        core.wait(1)
     if cyton_in:
         os.makedirs(save_dir, exist_ok=True)
         np.save(save_file_eeg, eeg)
         np.save(save_file_aux, aux)
-        np.save(save_file_timestamp, timestamp)
+        np.save(save_file_eeg_trials, eeg_trials)
+        np.save(save_file_aux_trials, aux_trials)
 
 else:
     while True:
