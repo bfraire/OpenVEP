@@ -2,9 +2,10 @@ from psychopy import visual, core
 from psychopy.hardware import keyboard
 import numpy as np
 from scipy import signal
-import random, os
+import random, os, pickle
+import mne
 
-cyton_in = False
+cyton_in = True
 lsl_out = False
 width = 1536
 height = 864
@@ -14,16 +15,17 @@ stim_duration = 1.2
 n_per_class = 2
 stim_type = 'alternating' # 'alternating' or 'independent'
 subject = 1
-session = 1
-training_mode = True
+session = 2
+calibration_mode = True
 save_dir = f'data/cyton8_{stim_type}-vep_32-class_{stim_duration}s/sub-{subject:02d}/ses-{session:02d}/' # Directory to save data to
-run = 2 # Run number, it is used as the random seed for the trial sequence generation
+run = 5 # Run number, it is used as the random seed for the trial sequence generation
 save_file_eeg = save_dir + f'eeg_{n_per_class}-per-class_run-{run}.npy'
 save_file_aux = save_dir + f'aux_{n_per_class}-per-class_run-{run}.npy'
 save_file_timestamp = save_dir + f'timestamp_{n_per_class}-per-class_run-{run}.npy'
 save_file_metadata = save_dir + f'metadata_{n_per_class}-per-class_run-{run}.npy'
 save_file_eeg_trials = save_dir + f'eeg-trials_{n_per_class}-per-class_run-{run}.npy'
 save_file_aux_trials = save_dir + f'aux-trials_{n_per_class}-per-class_run-{run}.npy'
+model_file_path = 'cache/FBTRCA_model.pkl'
 
 if cyton_in:
     import glob, sys, time, serial
@@ -104,6 +106,12 @@ if cyton_in:
     cyton_thread.daemon = True
     cyton_thread.start()
 
+    if os.path.exists(model_file_path):
+        with open(model_file_path, 'rb') as f:
+            model = pickle.load(f)
+    else:
+        model = None
+
 def create_32_targets(size=2/8*0.7, colors=[-1, -1, -1] * 32, checkered=False):
     width, height = window.size
     aspect_ratio = width/height
@@ -162,7 +170,7 @@ window = visual.Window(
         fullscr = True,
         useRetina = False,
     )
-visual_stimulus = create_32_targets(checkered=True)
+visual_stimulus = create_32_targets(checkered=False)
 photosensor_dot = create_photosensor_dot()
 num_frames = np.round(stim_duration * refresh_rate).astype(int)  # total number of frames per trial
 frame_indices = np.arange(num_frames)  # frame indices for the trial
@@ -192,19 +200,25 @@ eeg_trials = []
 aux_trials = []
 trial_ends = []
 skip_count = 0 # Number of trials to skip due to frame miss in those trials
+accuracy = 0
+predictions = []
+aim_target_color = 'white'
 
-if training_mode:
+if calibration_mode:
     for i_trial, target_id in enumerate(trial_sequence):
+        print(target_id)
         trial_text = visual.TextStim(window, text=f'Trial {i_trial+1}/{len(trial_sequence)}', pos=(0, -1+0.07), color='white', units='norm', height=0.07)
         trial_text.draw()
+        accuracy_text = visual.TextStim(window, text=f'Accuracy: {accuracy*100:.2f}%', pos=(0, 1-0.07), color=aim_target_color, units='norm', height=0.07)
+        accuracy_text.draw()
         visual_stimulus.colors = np.array([-1] * 3).T
         visual_stimulus.draw()
         photosensor_dot.color = np.array([-1, -1, -1])
         photosensor_dot.draw()
-        aim_target = visual.Rect(win=window, units="norm", width=2/8*0.7 * 1.3, height=2/8*0.7*aspect_ratio * 1.3, pos=target_positions[target_id], lineColor='red', lineWidth=3)
+        aim_target = visual.Rect(win=window, units="norm", width=2/8*0.7 * 1.3, height=2/8*0.7*aspect_ratio * 1.3, pos=target_positions[target_id], lineColor=aim_target_color, lineWidth=3)
         aim_target.draw()
         window.flip()
-        core.wait(1)
+        core.wait(0.7)
         finished_displaying = False
         while not finished_displaying:
             for i_frame in range(num_frames):
@@ -227,20 +241,20 @@ if training_mode:
                 aim_target.draw()
                 if core.getTime() > next_flip and i_frame != 0:
                     print('Missed frame')
-                    skip_count += 1
-                    visual_stimulus.colors = np.array([-1] * 3).T
-                    visual_stimulus.draw()
-                    window.flip()
-                    core.wait(0.5)
-                    visual_stimulus.colors = np.array([-1] * 3).T
-                    visual_stimulus.draw()
-                    photosensor_dot.color = np.array([-1, -1, -1])
-                    photosensor_dot.draw()
-                    trial_text.draw()
-                    aim_target.draw()
-                    window.flip()
-                    core.wait(0.5)
-                    break
+                    # skip_count += 1
+                    # visual_stimulus.colors = np.array([-1] * 3).T
+                    # visual_stimulus.draw()
+                    # window.flip()
+                    # core.wait(0.5)
+                    # visual_stimulus.colors = np.array([-1] * 3).T
+                    # visual_stimulus.draw()
+                    # photosensor_dot.color = np.array([-1, -1, -1])
+                    # photosensor_dot.draw()
+                    # trial_text.draw()
+                    # aim_target.draw()
+                    # window.flip()
+                    # core.wait(0.5)
+                    # break
                 window.flip()
             finished_displaying = True
         visual_stimulus.colors = np.array([-1] * 3).T
@@ -265,11 +279,26 @@ if training_mode:
             baseline_duration_samples = int(baseline_duration * sampling_rate)
             trial_start = trial_starts[i_trial+skip_count] - baseline_duration_samples
             trial_duration = int(stim_duration * sampling_rate) + baseline_duration_samples
-            trial_eeg = np.copy(eeg[:, trial_start:trial_start+trial_duration])
+            filtered_eeg = mne.filter.filter_data(eeg, sfreq=sampling_rate, l_freq=2, h_freq=40, verbose=False)
+            trial_eeg = np.copy(filtered_eeg[:, trial_start:trial_start+trial_duration])
             trial_aux = np.copy(aux[:, trial_start:trial_start+trial_duration])
             print(f'trial {i_trial}: ', trial_eeg.shape, trial_aux.shape)
+            baseline_average = np.mean(trial_eeg[:, :baseline_duration_samples], axis=1, keepdims=True)
+            trial_eeg -= baseline_average
             eeg_trials.append(trial_eeg)
             aux_trials.append(trial_aux)
+            cropped_eeg = trial_eeg[:, baseline_duration_samples:]
+            if model is not None:
+                prediction = model.predict(cropped_eeg)[0]
+                predictions.append(prediction)
+                accuracy = np.mean(np.array(predictions) == trial_sequence[:i_trial+1])
+                # print(predictions, trial_sequence[:i_trial+1], accuracy)
+                print(prediction, target_id, accuracy)
+                if prediction == target_id:
+                    aim_target_color = 'white'
+                else:
+                    aim_target_color = 'red'
+                    
             # time_window = -int((stim_duration + 0.3) * sampling_rate)
             # trial_eeg = np.copy(eeg[time_window:])
             # trial_aux = np.copy(aux[time_window:])
