@@ -5,7 +5,7 @@ from scipy import signal
 import random, os, pickle
 import mne
 
-cyton_in = True
+cyton_in = False
 lsl_out = False
 width = 1536
 height = 864
@@ -15,10 +15,10 @@ stim_duration = 1.2
 n_per_class = 2
 stim_type = 'alternating' # 'alternating' or 'independent'
 subject = 1
-session = 2
+session = 3
 calibration_mode = True
 save_dir = f'data/cyton8_{stim_type}-vep_32-class_{stim_duration}s/sub-{subject:02d}/ses-{session:02d}/' # Directory to save data to
-run = 5 # Run number, it is used as the random seed for the trial sequence generation
+run = 1 # Run number, it is used as the random seed for the trial sequence generation
 save_file_eeg = save_dir + f'eeg_{n_per_class}-per-class_run-{run}.npy'
 save_file_aux = save_dir + f'aux_{n_per_class}-per-class_run-{run}.npy'
 save_file_timestamp = save_dir + f'timestamp_{n_per_class}-per-class_run-{run}.npy'
@@ -26,6 +26,67 @@ save_file_metadata = save_dir + f'metadata_{n_per_class}-per-class_run-{run}.npy
 save_file_eeg_trials = save_dir + f'eeg-trials_{n_per_class}-per-class_run-{run}.npy'
 save_file_aux_trials = save_dir + f'aux-trials_{n_per_class}-per-class_run-{run}.npy'
 model_file_path = 'cache/FBTRCA_model.pkl'
+
+import string
+import numpy as np
+import psychopy.visual
+import psychopy.event
+from psychopy import core
+
+letters = 'QAZ⤒WSX,EDC⌂RFV⎵T⌫GBYHN.UJMPIKOL'
+win = psychopy.visual.Window(
+        size=(800, 800),
+        units="norm",
+        fullscr=False)
+n_text = 32
+text_cap_size = 64 #119  # 34
+text_strip_height = n_text * text_cap_size
+text_strip = np.full((text_strip_height, text_cap_size), np.nan)
+text = psychopy.visual.TextStim(win=win, height=0.145, font="Helvetica") # font="Courier"
+cap_rect_norm = [-(text_cap_size / 2.0) / (win.size[0] / 2.0),  # left
+                     +(text_cap_size / 2.0) / (win.size[1] / 2.0),  # top
+                     +(text_cap_size / 2.0) / (win.size[0] / 2.0),  # right
+                     -(text_cap_size / 2.0) / (win.size[1] / 2.0)]  # bottom
+# capture the rendering of each letter
+for (i_letter, letter) in enumerate(letters):
+    text.text = letter.upper()
+    buff = psychopy.visual.BufferImageStim(
+        win=win,
+        stim=[text],
+        rect=cap_rect_norm)
+    i_rows = slice(i_letter * text_cap_size,
+                    i_letter * text_cap_size + text_cap_size)
+    text_strip[i_rows, :] = (np.flipud(np.array(buff.image)[..., 0]) / 255.0 * 2.0 - 1.0)
+# need to pad 'text_strip' to pow2 to use as a texture
+new_size = max([int(np.power(2, np.ceil(np.log(dim_size) / np.log(2))))
+                for dim_size in text_strip.shape])
+pad_amounts = []
+for i_dim in range(2):
+    first_offset = int((new_size - text_strip.shape[i_dim]) / 2.0)
+    second_offset = new_size - text_strip.shape[i_dim] - first_offset
+    pad_amounts.append([first_offset, second_offset])
+text_strip = np.pad(
+    array=text_strip,
+    pad_width=pad_amounts,
+    mode="constant",
+    constant_values=0.0)
+text_strip = (text_strip - 1) * -1  # invert the texture mapping
+# make a central mask to show just one letter
+el_mask = np.ones(text_strip.shape) * -1.0
+# start by putting the visible section in the corner
+el_mask[:text_cap_size, :text_cap_size] = 1.0
+# then roll to the middle
+el_mask = np.roll(el_mask,
+                    (int(new_size / 2 - text_cap_size / 2),) * 2,
+                    axis=(0, 1))
+# work out the phase offsets for the different letters
+base_phase = ((text_cap_size * (n_text / 2.0)) - (text_cap_size / 2.0)) / new_size
+phase_inc = (text_cap_size) / float(new_size)
+phases = np.array([
+    (0.0, base_phase - i_letter * phase_inc)
+    for i_letter in range(n_text)])
+win.close()
+print(text_strip.shape, el_mask.shape, phases.shape)
 
 if cyton_in:
     import glob, sys, time, serial
@@ -112,17 +173,49 @@ if cyton_in:
     else:
         model = None
 
-def create_32_targets(size=2/8*0.7, colors=[-1, -1, -1] * 32, checkered=False):
+def create_32_targets(size=2/8*0.7, colors=[-1, -1, -1] * 32, checkered=False, elementTex=None, elementMask=None, phases=None):
     width, height = window.size
     aspect_ratio = width/height
     positions = create_32_target_positions(size)
+    # positions = [[int(pos[0]*width/2), int(pos[1]*height/2)] for pos in positions]
     if checkered:
         texture = checkered_texure()
     else:
-        texture = None
-    keys = visual.ElementArrayStim(window, nElements=32, elementTex=texture, elementMask=None, units='norm',
-                                   sizes=[size, size * aspect_ratio], xys=positions, colors=colors)
+        texture = elementTex
+    keys = visual.ElementArrayStim(window, nElements=32, elementTex=texture, elementMask=elementMask, units='norm',
+                                   sizes=[size, size * aspect_ratio], xys=positions, phases=phases, colors=colors) # sizes=[size, size * aspect_ratio]
     return keys
+
+def create_32_key_caps(size=2/8*0.7, colors=[-1, -1, -1] * 32):
+    width, height = window.size
+    aspect_ratio = width/height
+    positions = create_32_target_positions(size)
+    positions = [[pos[0]*width/2, pos[1]*height/2] for pos in positions]
+    keys = visual.ElementArrayStim(window, nElements=32, elementTex=text_strip, elementMask=el_mask, units='pix',
+                                   sizes=text_strip.shape, xys=positions, phases=phases, colors=colors)
+    return keys
+
+def create_key_caps(text_strip, el_mask, phases, colors=[-1, -1, -1] * 26):
+    positions = []
+    positions.extend([[-width / 2 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+    positions.extend([[-width / 2 + 190 * 1 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+    positions.extend([[-width / 2 + 190 * 2 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+    positions.extend([[-width / 2 + 190 * 3 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+    positions.extend([[-width / 2 + 190 * 4 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+    positions.extend([[-width / 2 + 190 * 5 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+    positions.extend([[-width / 2 + 190 * 6 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+    positions.extend([[-width / 2 + 190 * 7 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
+    els = visual.ElementArrayStim(
+        win=window,
+        units="pix",
+        nElements=32,
+        sizes=text_strip.shape,
+        xys=positions,
+        phases=phases,
+        colors=colors,
+        elementTex=text_strip,
+        elementMask=el_mask)
+    return els
 
 def checkered_texure():
     rows = 8  # Replace with desired number of rows
@@ -170,7 +263,10 @@ window = visual.Window(
         fullscr = True,
         useRetina = False,
     )
+# visual_stimulus = create_32_targets(checkered=False, elementTex=text_strip, elementMask=el_mask, phases=phases)
 visual_stimulus = create_32_targets(checkered=False)
+key_caps = create_32_key_caps()
+# key_caps = create_key_caps(text_strip, el_mask, phases)
 photosensor_dot = create_photosensor_dot()
 num_frames = np.round(stim_duration * refresh_rate).astype(int)  # total number of frames per trial
 frame_indices = np.arange(num_frames)  # frame indices for the trial
@@ -213,6 +309,7 @@ if calibration_mode:
         accuracy_text.draw()
         visual_stimulus.colors = np.array([-1] * 3).T
         visual_stimulus.draw()
+        key_caps.draw()
         photosensor_dot.color = np.array([-1, -1, -1])
         photosensor_dot.draw()
         aim_target = visual.Rect(win=window, units="norm", width=2/8*0.7 * 1.3, height=2/8*0.7*aspect_ratio * 1.3, pos=target_positions[target_id], lineColor=aim_target_color, lineWidth=3)
