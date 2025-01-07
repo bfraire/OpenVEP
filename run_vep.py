@@ -5,7 +5,7 @@ from scipy import signal
 import random, os, pickle
 import mne
 
-cyton_in = False
+cyton_in = True
 lsl_out = False
 width = 1536
 height = 864
@@ -16,7 +16,7 @@ n_per_class = 2
 stim_type = 'alternating' # 'alternating' or 'independent'
 subject = 1
 session = 1
-calibration_mode = True
+calibration_mode = False
 save_dir = f'data/cyton8_{stim_type}-vep_32-class_{stim_duration}s/sub-{subject:02d}/ses-{session:02d}/' # Directory to save data to
 run = 1 # Run number, it is used as the random seed for the trial sequence generation
 save_file_eeg = save_dir + f'eeg_{n_per_class}-per-class_run-{run}.npy'
@@ -33,7 +33,7 @@ import psychopy.visual
 import psychopy.event
 from psychopy import core
 
-letters = 'QAZ⤒WSX,EDC⌂RFV⎵T⌫GBYHN.UJMPIKOL'
+letters = 'QAZ⤒WSX,EDC?R⎵FVT⌫GBYHN.UJMPIKOL'
 win = psychopy.visual.Window(
         size=(800, 800),
         units="norm",
@@ -110,28 +110,6 @@ def create_32_key_caps(size=2/8*0.7, colors=[-1, -1, -1] * 32):
                                    sizes=text_strip.shape, xys=positions, phases=phases, colors=colors)
     return keys
 
-def create_key_caps(text_strip, el_mask, phases, colors=[-1, -1, -1] * 26):
-    positions = []
-    positions.extend([[-width / 2 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    positions.extend([[-width / 2 + 190 * 1 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    positions.extend([[-width / 2 + 190 * 2 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    positions.extend([[-width / 2 + 190 * 3 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    positions.extend([[-width / 2 + 190 * 4 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    positions.extend([[-width / 2 + 190 * 5 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    positions.extend([[-width / 2 + 190 * 6 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    positions.extend([[-width / 2 + 190 * 7 + 100, height / 2 - 90 - i * 200 - 80] for i in range(4)])
-    els = visual.ElementArrayStim(
-        win=window,
-        units="pix",
-        nElements=32,
-        sizes=text_strip.shape,
-        xys=positions,
-        phases=phases,
-        colors=colors,
-        elementTex=text_strip,
-        elementMask=el_mask)
-    return els
-
 def checkered_texure():
     rows = 8  # Replace with desired number of rows
     cols = 8  # Replace with desired number of columns
@@ -181,7 +159,6 @@ window = visual.Window(
 # visual_stimulus = create_32_targets(checkered=False, elementTex=text_strip, elementMask=el_mask, phases=phases)
 visual_stimulus = create_32_targets(checkered=False)
 key_caps = create_32_key_caps()
-# key_caps = create_key_caps(text_strip, el_mask, phases)
 photosensor_dot = create_photosensor_dot()
 photosensor_dot.color = np.array([-1, -1, -1])
 photosensor_dot.draw()
@@ -415,12 +392,80 @@ if calibration_mode:
         np.save(save_file_aux_trials, aux_trials)
 
 else:
-    while True:
-        keys = keyboard.getKeys()
-        if 'escape' in keys:
-            core.quit()
+    prediction = 0
+    pred_text_string = ''
+    shift = True
+    # while True:
+    for i_trial in range(1000):
+        pred_text = visual.TextStim(window, text=pred_text_string, pos=(-1+0.52, 1-0.07), color='white', units='norm', height=0.1, alignText='left', wrapWidth=2)
+        pred_text.draw()
+        visual_stimulus.colors = np.array([-1] * 3).T
+        visual_stimulus.draw()
+        key_caps.draw()
+        pred_target = visual.Rect(win=window, units="norm", width=2/8*0.7 * 1.3, height=2/8*0.7*aspect_ratio * 1.3, pos=target_positions[prediction], lineColor='white', lineWidth=3)
+        pred_target.draw()
+        photosensor_dot.color = np.array([-1, -1, -1])
+        photosensor_dot.draw()
+        window.flip()
+        core.wait(0.7)
         for i_frame in range(num_frames):
+            next_flip = window.getFutureFlipTime()
+
+            keys = keyboard.getKeys()
+            if 'escape' in keys:
+                core.quit()
+            
             visual_stimulus.colors = np.array([stimulus_frames[i_frame]] * 3).T
             visual_stimulus.draw()
+            photosensor_dot.color = np.array([1, 1, 1])
+            photosensor_dot.draw()
+            if core.getTime() > next_flip and i_frame != 0:
+                print('Missed frame')
             window.flip()
-        core.wait(1)
+        visual_stimulus.colors = np.array([-1] * 3).T
+        visual_stimulus.draw()
+        photosensor_dot.color = np.array([-1, -1, -1])
+        photosensor_dot.draw()
+        window.flip()
+        if cyton_in:
+            while len(trial_ends) <= i_trial+skip_count: # Wait for the current trial to be collected
+                while not queue_in.empty(): # Collect all data from the queue
+                    eeg_in, aux_in, timestamp_in = queue_in.get()
+                    print('data-in: ', eeg_in.shape, aux_in.shape, timestamp_in.shape)
+                    eeg = np.concatenate((eeg, eeg_in), axis=1)
+                    aux = np.concatenate((aux, aux_in), axis=1)
+                    timestamp = np.concatenate((timestamp, timestamp_in), axis=0)
+                photo_trigger = (aux[1] > 20).astype(int)
+                trial_starts = np.where(np.diff(photo_trigger) == 1)[0]
+                trial_ends = np.where(np.diff(photo_trigger) == -1)[0]
+            print('total: ',eeg.shape, aux.shape, timestamp.shape)
+            baseline_duration = 0.2
+            baseline_duration_samples = int(baseline_duration * sampling_rate)
+            trial_start = trial_starts[i_trial+skip_count] - baseline_duration_samples
+            trial_duration = int(stim_duration * sampling_rate) + baseline_duration_samples
+            filtered_eeg = mne.filter.filter_data(eeg, sfreq=sampling_rate, l_freq=2, h_freq=40, verbose=False)
+            trial_eeg = np.copy(filtered_eeg[:, trial_start:trial_start+trial_duration])
+            trial_aux = np.copy(aux[:, trial_start:trial_start+trial_duration])
+            print(f'trial {i_trial}: ', trial_eeg.shape, trial_aux.shape)
+            baseline_average = np.mean(trial_eeg[:, :baseline_duration_samples], axis=1, keepdims=True)
+            trial_eeg -= baseline_average
+            eeg_trials.append(trial_eeg)
+            aux_trials.append(trial_aux)
+            cropped_eeg = trial_eeg[:, baseline_duration_samples:]
+            if model is not None:
+                prediction = model.predict(cropped_eeg)[0]
+        pred_letter = letters[prediction]
+        if pred_letter not in ['⎵', '⌫', '⤒']:
+            if shift:
+                pred_text_string += pred_letter
+                shift = False
+            else:
+                pred_text_string += pred_letter.lower()
+        elif pred_letter == '⌫':
+            pred_text_string = pred_text_string[:-1]
+        elif pred_letter == '⎵':
+            pred_text_string += ' '
+        elif pred_letter == '⤒':
+            shift = True
+        if len(pred_text_string) >= 45:
+            pred_text_string = pred_text_string[-45:]
