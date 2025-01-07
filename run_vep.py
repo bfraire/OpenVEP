@@ -33,7 +33,7 @@ import psychopy.visual
 import psychopy.event
 from psychopy import core
 
-letters = 'QAZ⤒WSX,EDC?R⎵FVT⌫GBYHN.UJMPIKOL'
+letters = 'QAZ⤒WSX,EDC?R⌫FVT⎵GBYHN.UJMPIKOL'
 win = psychopy.visual.Window(
         size=(800, 800),
         units="norm",
@@ -397,7 +397,7 @@ else:
     shift = True
     # while True:
     for i_trial in range(1000):
-        pred_text = visual.TextStim(window, text=pred_text_string, pos=(-1+0.52, 1-0.07), color='white', units='norm', height=0.1, alignText='left', wrapWidth=2)
+        pred_text = visual.TextStim(window, text=pred_text_string, pos=(0.07, 1-0.07), color='white', units='norm', height=0.1, alignText='left', wrapWidth=1.94)
         pred_text.draw()
         visual_stimulus.colors = np.array([-1] * 3).T
         visual_stimulus.draw()
@@ -467,5 +467,5 @@ else:
             pred_text_string += ' '
         elif pred_letter == '⤒':
             shift = True
-        if len(pred_text_string) >= 45:
-            pred_text_string = pred_text_string[-45:]
+        if len(pred_text_string) > 74:
+            pred_text_string = pred_text_string[-74:]
