@@ -312,6 +312,9 @@ if calibration_mode:
                         # np.save(save_file_timestamp, timestamp)
                         np.save(save_file_eeg_trials, eeg_trials)
                         np.save(save_file_aux_trials, aux_trials)
+                        stop_event.set()
+                        board.stop_stream()
+                        board.release_session()
                     core.quit()
                 visual_stimulus.colors = np.array([stimulus_frames[i_frame]] * 3).T
                 visual_stimulus.draw()
@@ -390,6 +393,8 @@ if calibration_mode:
         np.save(save_file_aux, aux)
         np.save(save_file_eeg_trials, eeg_trials)
         np.save(save_file_aux_trials, aux_trials)
+        board.stop_stream()
+        board.release_session()
 
 else:
     prediction = 0
@@ -413,6 +418,9 @@ else:
 
             keys = keyboard.getKeys()
             if 'escape' in keys:
+                stop_event.set()
+                board.stop_stream()
+                board.release_session()
                 core.quit()
             
             visual_stimulus.colors = np.array([stimulus_frames[i_frame]] * 3).T
@@ -469,3 +477,6 @@ else:
             shift = True
         if len(pred_text_string) > 74:
             pred_text_string = pred_text_string[-74:]
+    stop_event.set()
+    board.stop_stream()
+    board.release_session()
