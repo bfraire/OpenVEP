@@ -33,7 +33,7 @@ import psychopy.visual
 import psychopy.event
 from psychopy import core
 
-words = ["HELLO", "WORLD", "COGS", "MUIR", "WARREN"]
+words = ["RUN", "KICK", "JUMP", "CLAP", "PULL"]
 
 
 # keep this one
@@ -66,7 +66,7 @@ window = visual.Window(
     useRetina = False,
 )
 
-text_stim = psychopy.visual.TextStim(win=window, text='', height=0.1, color='black', font="Helvetica")
+text_stim = psychopy.visual.TextStim(win=window, text='', height=0.5, color='black', font="Helvetica")
 trial_sequence = create_trial_sequence(3)
 photosensor_dot = create_photosensor_dot()
 photosensor_dot.color = np.array([-1, -1, -1])
@@ -183,7 +183,7 @@ if calibration_mode:
         photosensor_dot.color = np.array([-1, -1, -1])
         photosensor_dot.draw()
         window.flip()
-        core.wait(3)
+        core.wait(2.5)
         finished_displaying = False
         while not finished_displaying:
             for i_frame in range(num_frames):
