@@ -33,7 +33,7 @@ import psychopy.visual
 import psychopy.event
 from psychopy import core
 
-words = ["RUN", "KICK", "JUMP", "CLAP", "PULL"]
+words = ["LEFT KICK", "RIGHT KICK", "CLAP", "JUMP", "RAISE RIGHT ARM", "RAISE LEFT ARM"]
 
 
 # keep this one
@@ -66,8 +66,8 @@ window = visual.Window(
     useRetina = False,
 )
 
-text_stim = psychopy.visual.TextStim(win=window, text='', height=0.5, color='black', font="Helvetica")
-trial_sequence = create_trial_sequence(3)
+text_stim = psychopy.visual.TextStim(win=window, text='', height=0.3, color='black', font="Helvetica")
+trial_sequence = create_trial_sequence(5)
 photosensor_dot = create_photosensor_dot()
 photosensor_dot.color = np.array([-1, -1, -1])
 photosensor_dot.draw()
