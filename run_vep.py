@@ -5,7 +5,7 @@ from scipy import signal
 import random, os, pickle
 import mne
 
-cyton_in = False # change when BCI is connected
+cyton_in = True
 lsl_out = False
 width = 1536
 height = 864
